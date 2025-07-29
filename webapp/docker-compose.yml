@@ -20,6 +20,7 @@ services:
     depends_on:
       - mysql
       - memcached
+      - xray
     environment:
       ISUCONP_DB_HOST: mysql
       ISUCONP_DB_PORT: 3306
@@ -27,6 +28,10 @@ services:
       ISUCONP_DB_PASSWORD: root
       ISUCONP_DB_NAME: isuconp
       ISUCONP_MEMCACHED_ADDRESS: memcached:11211
+      AWS_XRAY_DAEMON_ADDRESS: xray:2000
+      AWS_XRAY_TRACING_NAME: private-isu
+      _AWS_XRAY_DAEMON_PORT: 2000
+      _AWS_XRAY_DAEMON_ADDRESS: xray
     networks:
       - my_network
     volumes:
@@ -61,6 +66,17 @@ services:
     image: memcached:1.6
     networks:
       - my_network
+
+  xray:
+    image: amazon/aws-xray-daemon:latest
+    ports:
+      - "2000:2000/udp"
+      - "2000:2000/tcp"
+    environment:
+      AWS_REGION: ap-northeast-1
+    networks:
+      - my_network
+    command: ["--bind=0.0.0.0:2000", "--log-level=info"]
 
 volumes:
   mysql:

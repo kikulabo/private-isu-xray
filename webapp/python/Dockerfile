@@ -13,4 +13,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
   uv sync --compile-bytecode
 COPY . .
 
-ENTRYPOINT [ "/home/webapp/.venv/bin/gunicorn", "app:app", "-b", "0.0.0.0:8080", "--log-file", "-", "--access-logfile", "-" ]
+# Make the run script executable
+RUN chmod +x /home/webapp/run_with_xray.sh
+
+ENTRYPOINT [ "/home/webapp/run_with_xray.sh" ]

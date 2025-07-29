@@ -10,4 +10,5 @@ dependencies = [
     "gunicorn>=23.0.0",
     "mysqlclient~=2.2.7",
     "pymemcache>=4.0.0",
+    "aws-xray-sdk>=2.13.0",
 ]

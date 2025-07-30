@@ -13,6 +13,11 @@ from jinja2 import pass_eval_context
 from markupsafe import Markup, escape
 from pymemcache.client.base import Client as MemcacheClient
 
+# AWS X-Ray imports
+from aws_xray_sdk.core import xray_recorder
+from aws_xray_sdk.ext.flask.middleware import XRayMiddleware
+from aws_xray_sdk.core import patch_all
+
 UPLOAD_LIMIT = 10 * 1024 * 1024  # 10mb
 POSTS_PER_PAGE = 20
 
@@ -20,6 +25,7 @@ POSTS_PER_PAGE = 20
 _config = None
 
 
+@xray_recorder.capture('config')
 def config():
     global _config
     if _config is None:
@@ -45,6 +51,7 @@ def config():
 _db = None
 
 
+@xray_recorder.capture('db')
 def db():
     global _db
     if _db is None:
@@ -56,6 +63,7 @@ def db():
     return _db
 
 
+@xray_recorder.capture('db_initialize')
 def db_initialize():
     cur = db().cursor()
     sqls = [
@@ -66,12 +74,14 @@ def db_initialize():
         "UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
     ]
     for q in sqls:
-        cur.execute(q)
+        with xray_recorder.subsegment(f'SQL: {q[:30]}...'):
+            cur.execute(q)
 
 
 _mcclient = None
 
 
+@xray_recorder.capture('memcache')
 def memcache():
     global _mcclient
     if _mcclient is None:
@@ -82,7 +92,9 @@ def memcache():
     return _mcclient
 
 
+@xray_recorder.capture('try_login')
 def try_login(account_name, password):
+    xray_recorder.current_subsegment().put_metadata('account_name', account_name)
     cur = db().cursor()
     cur.execute(
         "SELECT * FROM users WHERE account_name = %s AND del_flg = 0", (account_name,)
@@ -94,6 +106,7 @@ def try_login(account_name, password):
     return None
 
 
+@xray_recorder.capture('validate_user')
 def validate_user(account_name: str, password: str):
     if not re.match(r"[0-9a-zA-Z]{3,}", account_name):
         return False
@@ -102,6 +115,7 @@ def validate_user(account_name: str, password: str):
     return True
 
 
+@xray_recorder.capture('digest')
 def digest(src: str):
     # opensslのバージョンによっては (stdin)= というのがつくので取る
     out = subprocess.check_output(
@@ -112,14 +126,17 @@ def digest(src: str):
     return out.strip()
 
 
+@xray_recorder.capture('calculate_salt')
 def calculate_salt(account_name: str):
     return digest(account_name)
 
 
+@xray_recorder.capture('calculate_passhash')
 def calculate_passhash(account_name: str, password: str):
     return digest("%s:%s" % (password, calculate_salt(account_name)))
 
 
+@xray_recorder.capture('get_session_user')
 def get_session_user():
     user = flask.session.get("user")
     if user:
@@ -129,6 +146,7 @@ def get_session_user():
     return None
 
 
+@xray_recorder.capture('make_posts')
 def make_posts(results, all_comments=False):
     posts = []
     cursor = db().cursor()
@@ -171,6 +189,12 @@ static_path = pathlib.Path(__file__).resolve().parent.parent / "public"
 app = flask.Flask(__name__, static_folder=str(static_path), static_url_path="")
 # app.debug = True
 
+# X-Ray configuration
+xray_recorder.configure(service='private-isu')
+XRayMiddleware(app, xray_recorder)
+# Patch all supported libraries for automatic tracing
+patch_all()
+
 # Flask-Session
 app.config["SESSION_TYPE"] = "memcached"
 app.config["SESSION_MEMCACHED"] = memcache()
@@ -211,12 +235,14 @@ def nl2br(eval_ctx, value):
 
 
 @app.route("/initialize")
+@xray_recorder.capture('get_initialize')
 def get_initialize():
     db_initialize()
     return ""
 
 
 @app.route("/login")
+@xray_recorder.capture('get_login')
 def get_login():
     if get_session_user():
         return flask.redirect("/")
@@ -224,6 +250,7 @@ def get_login():
 
 
 @app.route("/login", methods=["POST"])
+@xray_recorder.capture('post_login')
 def post_login():
     if get_session_user():
         return flask.redirect("/")
@@ -239,6 +266,7 @@ def post_login():
 
 
 @app.route("/register")
+@xray_recorder.capture('get_register')
 def get_register():
     if get_session_user():
         return flask.redirect("/")
@@ -246,6 +274,7 @@ def get_register():
 
 
 @app.route("/register", methods=["POST"])
+@xray_recorder.capture('post_register')
 def post_register():
     if get_session_user():
         return flask.redirect("/")
@@ -274,12 +303,14 @@ def post_register():
 
 
 @app.route("/logout")
+@xray_recorder.capture('get_logout')
 def get_logout():
     flask.session.clear()
     return flask.redirect("/")
 
 
 @app.route("/")
+@xray_recorder.capture('get_index')
 def get_index():
     me = get_session_user()
 
@@ -293,7 +324,9 @@ def get_index():
 
 
 @app.route("/@<account_name>")
+@xray_recorder.capture('get_user_list')
 def get_user_list(account_name):
+    xray_recorder.current_subsegment().put_annotation('account_name', account_name)
     cursor = db().cursor()
 
     cursor.execute(
@@ -340,6 +373,7 @@ def get_user_list(account_name):
     )
 
 
+@xray_recorder.capture('_parse_iso8601')
 def _parse_iso8601(s):
     # http://bugs.python.org/issue15873
     # Ignore timezone
@@ -350,6 +384,7 @@ def _parse_iso8601(s):
 
 
 @app.route("/posts")
+@xray_recorder.capture('get_posts')
 def get_posts():
     cursor = db().cursor()
     max_created_at = flask.request.args["max_created_at"] or None
@@ -369,7 +404,9 @@ def get_posts():
 
 
 @app.route("/posts/<id>")
+@xray_recorder.capture('get_posts_id')
 def get_posts_id(id):
+    xray_recorder.current_subsegment().put_annotation('post_id', id)
     cursor = db().cursor()
 
     cursor.execute("SELECT * FROM `posts` WHERE `id` = %s", (id,))
@@ -382,6 +419,7 @@ def get_posts_id(id):
 
 
 @app.route("/", methods=["POST"])
+@xray_recorder.capture('post_index')
 def post_index():
     me = get_session_user()
     if not me:
@@ -420,12 +458,16 @@ def post_index():
 
 
 @app.route("/image/<id>.<ext>")
+@xray_recorder.capture('get_image')
 def get_image(id, ext):
     if not id:
         return ""
     id = int(id)
     if id == 0:
         return ""
+    
+    xray_recorder.current_subsegment().put_annotation('image_id', id)
+    xray_recorder.current_subsegment().put_annotation('ext', ext)
 
     cursor = db().cursor()
     cursor.execute("SELECT * FROM `posts` WHERE `id` = %s", (id,))
@@ -446,6 +488,7 @@ def get_image(id, ext):
 
 
 @app.route("/comment", methods=["POST"])
+@xray_recorder.capture('post_comment')
 def post_comment():
     me = get_session_user()
     if not me:
@@ -469,6 +512,7 @@ def post_comment():
 
 
 @app.route("/admin/banned")
+@xray_recorder.capture('get_banned')
 def get_banned():
     me = get_session_user()
     if not me:
@@ -487,6 +531,7 @@ def get_banned():
 
 
 @app.route("/admin/banned", methods=["POST"])
+@xray_recorder.capture('post_banned')
 def post_banned():
     me = get_session_user()
     if not me:

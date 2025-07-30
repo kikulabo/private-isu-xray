@@ -27,6 +27,22 @@ services:
       ISUCONP_DB_PASSWORD: root
       ISUCONP_DB_NAME: isuconp
       ISUCONP_MEMCACHED_ADDRESS: memcached:11211
+      # AWS Application Signals configuration
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_AWS_APPLICATION_SIGNALS_ENABLED: "true"
+      OTEL_PYTHON_DISTRO: aws_distro
+      OTEL_PYTHON_CONFIGURATOR: aws_configurator
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_SAMPLER: xray
+      OTEL_TRACES_SAMPLER_ARG: "endpoint=http://localhost:2000"
+      OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT: http://localhost:4316/v1/metrics
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://localhost:4316/v1/traces
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=private-isucon,deployment.environment=isucon"
+      AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
+      AWS_XRAY_LOG_LEVEL: info
+      AWS_XRAY_TRACING_NAME: private-isu
+      AWS_XRAY_TRACE_SQL_QUERIES: true
     networks:
       - my_network
     volumes:

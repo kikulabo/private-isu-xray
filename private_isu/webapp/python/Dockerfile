@@ -13,4 +13,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
   uv sync --compile-bytecode
 COPY . .
 
-ENTRYPOINT [ "/home/webapp/.venv/bin/gunicorn", "app:app", "-b", "0.0.0.0:8080", "--log-file", "-", "--access-logfile", "-" ]
+# Set Python path for OpenTelemetry auto-instrumentation
+ENV PYTHONPATH=/home/webapp
+
+ENTRYPOINT [ \
+  "/home/webapp/.venv/bin/opentelemetry-instrument", \
+  "/home/webapp/.venv/bin/gunicorn", \
+  "app:app", \
+  "-b", "0.0.0.0:8080", \
+  "--log-file", "-", \
+  "--access-logfile", "-", \
+  "--workers", "2", \
+  "--threads", "4", \
+  "--timeout", "120"
+]
